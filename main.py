@@ -16,6 +16,7 @@ import numpy as np
 import time
 import math
 import copy
+import hdf5plugin
 from torch.cuda.amp import GradScaler, autocast
 #from dataloader import listflowfile as lt
 # from dataloader import KITTILoader as DA
