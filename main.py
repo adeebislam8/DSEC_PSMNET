@@ -15,7 +15,6 @@ import torch.nn.functional as F
 import numpy as np
 import time
 import math
-import hdf5plugin
 import copy
 from torch.cuda.amp import GradScaler, autocast
 #from dataloader import listflowfile as lt
@@ -257,6 +256,7 @@ def main():
 
     #------------- TEST ------------------------------------------------------------
     total_test_loss = 0
+    count = 0
     for batch_idx, data in enumerate(TestImgLoader):
             disp = voxel.get_disp(data)
             disp = torch.from_numpy(disp)
@@ -265,6 +265,9 @@ def main():
             test_loss = test(left_voxel,right_voxel, disp)
             print('Iter %d test loss = %.3f' %(batch_idx, test_loss))
             total_test_loss += test_loss
+            if count > 100:
+                break
+            count += 1
 
     print('total test loss = %.3f' %(total_test_loss/len(TestImgLoader)))
     #----------------------------------------------------------------------------------
