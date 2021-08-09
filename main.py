@@ -15,6 +15,7 @@ import torch.nn.functional as F
 import numpy as np
 import time
 import math
+import copy
 from torch.cuda.amp import GradScaler, autocast
 #from dataloader import listflowfile as lt
 from dataloader import KITTILoader as DA
@@ -94,35 +95,36 @@ print('Number of model parameters: {}'.format(sum([p.data.nelement() for p in mo
 optimizer = optim.Adam(model.parameters(), lr=0.01, betas=(0.9, 0.999))
 
 def train(batch_idx, imgL,imgR, disp_true):
-        model.train()
-        # print('args.cuda: ', args.cuda)
-        if args.cuda:
-            imgL, imgR, disp_true = imgL.cuda().unsqueeze(0), imgR.cuda().unsqueeze(0), disp_true.cuda().unsqueeze(0)
-            # print(imgL.shape, imgR.shape, disp_true.shape)
+    model.train()
+    # print('args.cuda: ', args.cuda)
+    if args.cuda:
+        imgL, imgR, disp_true = imgL.cuda().unsqueeze(0), imgR.cuda().unsqueeze(0), disp_true.cuda().unsqueeze(0)
+        # print(imgL.shape, imgR.shape, disp_true.shape)
 
-       #---------
-        mask = disp_true < args.maxdisp
-        mask.detach_()
-        #----
-        optimizer.zero_grad()
-        with autocast():
-            if args.model == 'stackhourglass':
-                output1, output2, output3 = model(imgL,imgR)
-                output1 = torch.squeeze(output1,1)
-                output2 = torch.squeeze(output2,1)
-                output3 = torch.squeeze(output3,1)
-                loss = 0.5*F.smooth_l1_loss(output1[mask], disp_true[mask], size_average=True) + 0.7*F.smooth_l1_loss(output2[mask], disp_true[mask], size_average=True) + F.smooth_l1_loss(output3[mask], disp_true[mask], size_average=True) 
-            elif args.model == 'basic':
-                output = model(imgL,imgR)
-                output = torch.squeeze(output,1)
-                loss = F.smooth_l1_loss(output[mask], disp_true[mask], size_average=True)
+    #---------
+    mask = disp_true > 0
+    # mask = disp_true < args.maxdisp
+    mask.detach_()
+    #----
+    optimizer.zero_grad()
+    with autocast():
+        if args.model == 'stackhourglass':
+            output1, output2, output3 = model(imgL,imgR)
+            output1 = torch.squeeze(output1,1)
+            output2 = torch.squeeze(output2,1)
+            output3 = torch.squeeze(output3,1)
+            loss = 0.5*F.smooth_l1_loss(output1[mask], disp_true[mask], size_average=True) + 0.7*F.smooth_l1_loss(output2[mask], disp_true[mask], size_average=True) + F.smooth_l1_loss(output3[mask], disp_true[mask], size_average=True) 
+        elif args.model == 'basic':
+            output = model(imgL,imgR)
+            output = torch.squeeze(output,1)
+            loss = F.smooth_l1_loss(output[mask], disp_true[mask], size_average=True)
 
-                ## visualizing model output(prediction)
-                if batch_idx%50 == 0:
-                    output = output.cpu().detach().numpy()
-                    disp_true = disp_true.cpu()
-                    show(disp_true[0])
-                    show(output[0])
+            ## visualizing model output(prediction)
+            if batch_idx%50 == 0:
+                output = output.cpu().detach().numpy()
+                disp_true = disp_true.cpu()
+                show(disp_true[0])
+                show(output[0])
 
         loss.backward()
         optimizer.step()
@@ -131,45 +133,73 @@ def train(batch_idx, imgL,imgR, disp_true):
         # return loss
 
 def test(imgL,imgR,disp_true):
-
-        model.eval()
+    ###################################################
+    ### TESTING METHOD FOR main.py ###
+        # model.eval()
   
-        if args.cuda:
-            imgL, imgR, disp_true = imgL.cuda(), imgR.cuda(), disp_true.cuda()
-        #---------
-        mask = disp_true < 192
-        #----
+        # if args.cuda:
+        #     imgL, imgR, disp_true = imgL.cuda(), imgR.cuda(), disp_true.cuda()
+        # #---------
+        # mask = disp_true > 0
+        # # mask = disp_true < 192
+        # #----
 
-        if imgL.shape[2] % 16 != 0:
-            times = imgL.shape[2]//16       
-            top_pad = (times+1)*16 -imgL.shape[2]
-        else:
-            top_pad = 0
+        # if imgL.shape[2] % 16 != 0:
+        #     times = imgL.shape[2]//16       
+        #     top_pad = (times+1)*16 -imgL.shape[2]
+        # else:
+        #     top_pad = 0
 
-        if imgL.shape[3] % 16 != 0:
-            times = imgL.shape[3]//16                       
-            right_pad = (times+1)*16-imgL.shape[3]
-        else:
-            right_pad = 0  
+        # if imgL.shape[3] % 16 != 0:
+        #     times = imgL.shape[3]//16                       
+        #     right_pad = (times+1)*16-imgL.shape[3]
+        # else:
+        #     right_pad = 0  
 
-        imgL = F.pad(imgL,(0,right_pad, top_pad,0))
-        imgR = F.pad(imgR,(0,right_pad, top_pad,0))
+        # imgL = F.pad(imgL,(0,right_pad, top_pad,0))
+        # imgR = F.pad(imgR,(0,right_pad, top_pad,0))
 
-        with torch.no_grad():
-            output3 = model(imgL,imgR)
-            output3 = torch.squeeze(output3)
+        # with torch.no_grad():
+        #     output3 = model(imgL,imgR)
+        #     output3 = torch.squeeze(output3)
         
-        if top_pad !=0:
-            img = output3[:,top_pad:,:]
-        else:
-            img = output3
+        # if top_pad !=0:
+        #     img = output3[:,top_pad:,:]
+        # else:
+        #     img = output3
 
-        if len(disp_true[mask])==0:
-           loss = 0
-        else:
-           loss = F.l1_loss(img[mask],disp_true[mask]) #torch.mean(torch.abs(img[mask]-disp_true[mask]))  # end-point-error
+        # if len(disp_true[mask])==0:
+        #    loss = 0
+        # else:
+        #    loss = F.l1_loss(img[mask],disp_true[mask]) #torch.mean(torch.abs(img[mask]-disp_true[mask]))  # end-point-error
 
-        return loss.data.cpu()
+        # return loss.data.cpu()
+
+        ###########################################
+    model.eval()
+    disp_true = disp_true.unsqueeze(0)
+
+    imgL = Variable(torch.FloatTensor(imgL))
+    imgR = Variable(torch.FloatTensor(imgR))
+    if args.cuda:
+        imgL, imgR = imgL.cuda().unsqueeze(0), imgR.cuda().unsqueeze(0)
+    with torch.no_grad():
+        output3 = model(imgL, imgR)
+
+    pred_disp = output3.data.cpu()
+    pred_disp = pred_disp.squeeze(0)
+    #computing 3-px error#
+    true_disp = copy.deepcopy(disp_true)
+    index = np.argwhere(true_disp > 0)
+    disp_true[index[0][:], index[1][:], index[2][:]] = np.abs(
+        true_disp[index[0][:], index[1][:], index[2][:]]-pred_disp[index[0][:], index[1][:], index[2][:]])
+    correct = (disp_true[index[0][:], index[1][:], index[2][:]] < 3) | (
+        disp_true[index[0][:], index[1][:], index[2][:]] < true_disp[index[0][:], index[1][:], index[2][:]]*0.05)
+    torch.cuda.empty_cache()
+
+    return 1-(float(torch.sum(correct))/float(len(index[0])))
+
+
 
 def adjust_learning_rate(optimizer, epoch):
     lr = 0.001
@@ -211,6 +241,7 @@ def main():
 
             print('Iter %d training loss = %.3f , time = %.2f' %(batch_idx, loss, time.time() - start_time))
             total_train_loss += loss
+            
         print('epoch %d total training loss = %.3f' %(epoch, total_train_loss/len(TrainImgLoader)))
 
         #SAVE
@@ -225,8 +256,12 @@ def main():
 
     #------------- TEST ------------------------------------------------------------
     total_test_loss = 0
-    for batch_idx, (imgL, imgR, disp_L) in enumerate(TestImgLoader):
-            test_loss = test(imgL,imgR, disp_L)
+    for batch_idx, data in enumerate(TestImgLoader):
+            disp = voxel.get_disp(data)
+            disp = torch.from_numpy(disp)
+            left_voxel = voxel.get_left_voxel(data)
+            right_voxel = voxel.get_right_voxel(data)
+            test_loss = test(left_voxel,right_voxel, disp)
             print('Iter %d test loss = %.3f' %(batch_idx, test_loss))
             total_test_loss += test_loss
 
