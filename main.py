@@ -14,6 +14,7 @@ from torch.autograd import Variable
 import torch.nn.functional as F
 import numpy as np
 import time
+import cv2
 import math
 import copy
 import hdf5plugin
@@ -123,9 +124,11 @@ def train(batch_idx, imgL,imgR, disp_true):
             ## visualizing model output(prediction)
             if batch_idx%50 == 0:
                 output = output.cpu().detach().numpy()
-                disp_true = disp_true.cpu()
-                show(disp_true[0])
-                show(output[0])
+                disp_true = disp_true.cpu().numpy()
+                cv2.imwrite("/content/DSEC_PSMNET/disp_true.jpg", disp_true[0])
+                cv2.imwrite("/content/DSEC_PSMNET/pred.jpg", output[0])
+                # show(disp_true[0])
+                # show(output[0])
 
         loss.backward()
         optimizer.step()
