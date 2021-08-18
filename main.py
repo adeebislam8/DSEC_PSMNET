@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import argparse
 import os
 import random
+from numpy.core.numeric import NaN, indices
 from numpy.core.shape_base import block
 from scripts.dataset.provider import DatasetProvider
 from numpy.lib.function_base import disp
@@ -51,28 +52,9 @@ if args.cuda:
 
 dsec_dir = Path(args.datapath)
 dataset_provider = DatasetProvider(dsec_dir)
-train_dataset = dataset_provider.get_train_dataset()
-test_dataset = dataset_provider.get_val_dataset()
 
 batch_size = 1
 num_workers = 0
-TrainImgLoader = torch.utils.data.DataLoader(dataset=train_dataset, 
-                                             shuffle=True,
-                                             batch_size=batch_size,
-                                             num_workers=num_workers,
-                                             drop_last=False)
-print("lenth of TrainImgLoader: ",len(TrainImgLoader), '\n')
-TestImgLoader = torch.utils.data.DataLoader(dataset=test_dataset, 
-                                             batch_size=batch_size,
-                                             num_workers=num_workers,
-                                             drop_last=False)
-# TrainImgLoader = torch.utils.data.DataLoader(
-#          DA.myImageFloder(all_left_img,all_right_img,all_left_disp, True), 
-#          batch_size= 3, shuffle= True, num_workers= 4, drop_last=False)
-
-# TestImgLoader = torch.utils.data.DataLoader(
-        #  DA.myImageFloder(test_left_img,test_right_img,test_left_disp, False), 
-#          batch_size= 3, shuffle= False, num_workers= 4, drop_last=False)
 
 
 if args.model == 'stackhourglass':
@@ -108,86 +90,72 @@ def train(batch_idx, imgL,imgR, disp_true):
     mask.detach_()
     #----
     optimizer.zero_grad()
-    with autocast():
-        if args.model == 'stackhourglass':
-            output1, output2, output3 = model(imgL,imgR)
-            output1 = torch.squeeze(output1,1)
-            output2 = torch.squeeze(output2,1)
-            output3 = torch.squeeze(output3,1)
-            loss = 0.5*F.smooth_l1_loss(output1[mask], disp_true[mask], size_average=True) + 0.7*F.smooth_l1_loss(output2[mask], disp_true[mask], size_average=True) + F.smooth_l1_loss(output3[mask], disp_true[mask], size_average=True) 
-        elif args.model == 'basic':
-            output = model(imgL,imgR)
-            output = torch.squeeze(output,1)
-            loss = F.smooth_l1_loss(output[mask], disp_true[mask], size_average=True)
+    with torch.autograd.detect_anomaly():
+        with autocast(): 
+            if args.model == 'stackhourglass':
+                output1, output2, output3 = model(imgL,imgR)
+                output1 = torch.squeeze(output1,1)
+                output2 = torch.squeeze(output2,1)
+                output3 = torch.squeeze(output3,1)
+                loss = 0.5*F.smooth_l1_loss(output1[mask], disp_true[mask], size_average=True) + 0.7*F.smooth_l1_loss(output2[mask], disp_true[mask], size_average=True) + F.smooth_l1_loss(output3[mask], disp_true[mask], size_average=True) 
+            elif args.model == 'basic':
+                output = model(imgL,imgR)
+                output = torch.squeeze(output,1)
+                loss = F.smooth_l1_loss(output[mask], disp_true[mask], size_average=True)
 
-            ## visualizing model output(prediction)
-            if batch_idx%50 == 0:
-                output = output.cpu().detach().numpy()
-                disp_true = disp_true.cpu()
-                show(disp_true[0])
-                show(output[0])
+                if torch.isnan(loss):
+                    print(loss)
+                    print(output)
+                    # show(output[0])
+                    loss = None #prevent backpropogation
+                    return loss
 
-        loss.backward()
-        optimizer.step()
+                ## visualizing model output(prediction)
+                if batch_idx%100 == 0:
+                    output = output.cpu().detach().numpy()
+                    disp_true = disp_true.cpu()
+                    show(disp_true[0])
+                    show(output[0])
 
-        return loss.data
+        if torch.isnan(loss.data):
+            print("nan found\n")
+            return loss.data
+        else:
+            loss.backward()
+            optimizer.step()
+
+            return loss.data
         # return loss
 
 def test(imgL,imgR,disp_true):
-    ###################################################
-    ### TESTING METHOD FOR main.py ###
-        # model.eval()
-  
-        # if args.cuda:
-        #     imgL, imgR, disp_true = imgL.cuda(), imgR.cuda(), disp_true.cuda()
-        # #---------
-        # mask = disp_true > 0
-        # # mask = disp_true < 192
-        # #----
 
-        # if imgL.shape[2] % 16 != 0:
-        #     times = imgL.shape[2]//16       
-        #     top_pad = (times+1)*16 -imgL.shape[2]
-        # else:
-        #     top_pad = 0
-
-        # if imgL.shape[3] % 16 != 0:
-        #     times = imgL.shape[3]//16                       
-        #     right_pad = (times+1)*16-imgL.shape[3]
-        # else:
-        #     right_pad = 0  
-
-        # imgL = F.pad(imgL,(0,right_pad, top_pad,0))
-        # imgR = F.pad(imgR,(0,right_pad, top_pad,0))
-
-        # with torch.no_grad():
-        #     output3 = model(imgL,imgR)
-        #     output3 = torch.squeeze(output3)
-        
-        # if top_pad !=0:
-        #     img = output3[:,top_pad:,:]
-        # else:
-        #     img = output3
-
-        # if len(disp_true[mask])==0:
-        #    loss = 0
-        # else:
-        #    loss = F.l1_loss(img[mask],disp_true[mask]) #torch.mean(torch.abs(img[mask]-disp_true[mask]))  # end-point-error
-
-        # return loss.data.cpu()
-
-        ###########################################
     model.eval()
     disp_true = disp_true.unsqueeze(0)
 
     imgL = Variable(torch.FloatTensor(imgL))
     imgR = Variable(torch.FloatTensor(imgR))
-    if args.cuda:
-        imgL, imgR = imgL.cuda().unsqueeze(0), imgR.cuda().unsqueeze(0)
-    with torch.no_grad():
-        output3 = model(imgL, imgR)
+    with torch.autograd.detect_anomaly():
+
+        if args.cuda:
+            imgL, imgR = imgL.cuda().unsqueeze(0), imgR.cuda().unsqueeze(0)
+        with torch.no_grad():
+            output3 = model(imgL, imgR)
+
+            # output3 = output3.cpu().detach().numpy().squeeze(0)
+            # disp_true = disp_true.cpu()
+            # show(disp_true[0])
+            # show(output3[0])
+
+
 
     pred_disp = output3.data.cpu()
+    show_output = output3.squeeze().cpu().detach().numpy()
+    show_disp_true = disp_true.cpu().squeeze()
+    # print(disp_true.shape)
+    # print(show_disp_true.shape)
+
+    show(show_disp_true)
+    show(show_output)
     pred_disp = pred_disp.squeeze(0)
     #computing 3-px error#
     true_disp = copy.deepcopy(disp_true)
@@ -203,7 +171,10 @@ def test(imgL,imgR,disp_true):
 
 
 def adjust_learning_rate(optimizer, epoch):
-    lr = 0.001
+    lr = 0.0001
+    # lr = 0.0009 * (0.99**(epoch))
+    # if epoch > 50:
+    #     lr = 0.0001
     print(lr)
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
@@ -217,65 +188,106 @@ def show(img):
 
 def main():
 
+
     start_full_time = time.time()
-    # scaler = GradScaler()
-    # batch_size = 4
-    # gradient_accumulations = 16
-    # model.zero_grad()
 
     for epoch in range(0, args.epochs):
 
         print('This is %d-th epoch' %(epoch))
         total_train_loss = 0
         adjust_learning_rate(optimizer,epoch)
+        train_dataset = dataset_provider.get_train_dataset()
+        test_dataset = dataset_provider.get_val_dataset()
 
+        TrainImgLoader = torch.utils.data.DataLoader(dataset=train_dataset, 
+                                                    shuffle=True,
+                                                    batch_size=batch_size,
+                                                    num_workers=num_workers,
+                                                    drop_last=False)
+        print("lenth of TrainImgLoader: ",len(TrainImgLoader), '\n')
+        TestImgLoader = torch.utils.data.DataLoader(dataset=test_dataset, 
+                                                    shuffle=True,
+                                                    batch_size=batch_size,
+                                                    num_workers=num_workers,
+                                                    drop_last=False)
 
         ## training ##
         # with torch.no_grad():
+        # random.shuffle(TrainImgLoader)
+        count = 0
         for batch_idx, data in enumerate(TrainImgLoader):
+            # print(data['file_index'])
+
             start_time = time.time()
             disp = voxel.get_disp(data)
             disp = torch.from_numpy(disp)
             left_voxel = voxel.get_left_voxel(data)
             right_voxel = voxel.get_right_voxel(data)
-            loss = train(batch_idx,left_voxel,right_voxel, disp)
-
-            print('Iter %d training loss = %.3f , time = %.2f' %(batch_idx, loss, time.time() - start_time))
-            total_train_loss += loss
+            if torch.any(torch.isnan(disp)):
+                print("disp has nan\n")
+                next
+            if torch.any(torch.isnan(left_voxel)):
+                print("left_voxel has nan\n")
+                next
+            if torch.any(torch.isnan(right_voxel)):
+                print("right_voxel has nan\n")
+                next
             
-        print('epoch %d total training loss = %.3f' %(epoch, total_train_loss/len(TrainImgLoader)))
+            loss = train(batch_idx,left_voxel,right_voxel, disp)
+            # print(type(loss))
+            assert not torch.isnan(loss)
+            if torch.isnan(loss) or (loss == None):
+                print("moving to next image\n")
+                disp = disp.unsqueeze[0]
+                left_voxel = left_voxel.unsqueeze[0]
+                right_voxel = right_voxel.unsqueeze[0]
+                show(disp[0])
+                show(left_voxel[0])
+                show(right_voxel[0])
+                next
+
+            else:
+                print('Iter %d training loss = %.3f , time = %.2f' %(batch_idx, loss, time.time() - start_time))
+                print("updating total_train_loss\n")
+                total_train_loss += loss
+                # break
+                if count > 0:
+                        break
+                count += 1
+            
+        print('epoch %d total training loss = %.3f' %(epoch, total_train_loss/count))
 
         #SAVE
         savefilename = args.savemodel+'/checkpoint_'+str(epoch)+'.tar'
         torch.save({
             'epoch': epoch,
             'state_dict': model.state_dict(),
-                    'train_loss': total_train_loss/len(TrainImgLoader),
+                    'train_loss': total_train_loss/count,
         }, savefilename)
 
-    print('full training time = %.2f HR' %((time.time() - start_full_time)/3600))
+        print('full training time = %.2f HR' %((time.time() - start_full_time)/3600))
 
     #------------- TEST ------------------------------------------------------------
-    total_test_loss = 0
-    count = 0
-    for batch_idx, data in enumerate(TestImgLoader):
-            disp = voxel.get_disp(data)
-            disp = torch.from_numpy(disp)
-            left_voxel = voxel.get_left_voxel(data)
-            right_voxel = voxel.get_right_voxel(data)
-            test_loss = test(left_voxel,right_voxel, disp)
-            print('Iter %d test loss = %.3f' %(batch_idx, test_loss))
-            total_test_loss += test_loss
-            if count > 100:
-                break
-            count += 1
+        total_test_loss = 0
+        count = 0
+        for batch_idx, data in enumerate(TestImgLoader):
+                disp = voxel.get_disp(data)
+                disp = torch.from_numpy(disp)
+                left_voxel = voxel.get_left_voxel(data)
+                right_voxel = voxel.get_right_voxel(data)
+                test_loss = test(left_voxel,right_voxel, disp)
+                print('Iter %d test loss = %.3f' %(batch_idx, test_loss))
+                total_test_loss += test_loss
+                if count > 50:
+                    break
+                count += 1
 
-    print('total test loss = %.3f' %(total_test_loss/len(TestImgLoader)))
+        print('total test loss = %.3f' %(total_test_loss/count))
     #----------------------------------------------------------------------------------
     #SAVE test information
     savefilename = args.savemodel+'testinformation.tar'
     torch.save({
-            'test_loss': total_test_loss/len(TestImgLoader),
+            'test_loss': total_test_loss/count,
         }, savefilename)
 
 def main3():
