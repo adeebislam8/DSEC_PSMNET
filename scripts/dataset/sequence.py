@@ -1,3 +1,5 @@
+from datetime import time
+from os import times
 from pathlib import Path
 import weakref
 
@@ -6,9 +8,10 @@ import h5py
 import numpy as np
 import torch
 from torch.utils.data import Dataset
-
+import csv
 from scripts.dataset.representations import VoxelGrid
 from scripts.utils.eventslicer import EventSlicer
+import pandas as pd
 
 
 class Sequence(Dataset):
@@ -53,27 +56,49 @@ class Sequence(Dataset):
         self.delta_t_us = delta_t_ms * 1000
 
         # load disparity timestamps
-        disp_dir = seq_path / 'disparity'
-        assert disp_dir.is_dir()
-        self.timestamps = np.loadtxt(disp_dir / 'timestamps.txt', dtype='int64')
+        if self.mode == 'train':
+            disp_dir = seq_path / 'disparity'
+            assert disp_dir.is_dir()
+            self.timestamps = np.loadtxt(disp_dir / 'timestamps.txt', dtype='int64')
 
-        # load disparity paths
-        ev_disp_dir = disp_dir / 'event'
-        assert ev_disp_dir.is_dir()
-        disp_gt_pathstrings = list()
-        for entry in ev_disp_dir.iterdir():
-            assert str(entry.name).endswith('.png')
-            disp_gt_pathstrings.append(str(entry))
-        disp_gt_pathstrings.sort()
-        self.disp_gt_pathstrings = disp_gt_pathstrings
+            # load disparity paths
+            ev_disp_dir = disp_dir / 'event'
+            assert ev_disp_dir.is_dir()
+            disp_gt_pathstrings = list()
+            for entry in ev_disp_dir.iterdir():
+                assert str(entry.name).endswith('.png')
+                disp_gt_pathstrings.append(str(entry))
+            disp_gt_pathstrings.sort()
+            self.disp_gt_pathstrings = disp_gt_pathstrings
 
-        assert len(self.disp_gt_pathstrings) == self.timestamps.size
+            assert len(self.disp_gt_pathstrings) == self.timestamps.size
 
-        # Remove first disparity path and corresponding timestamp.
-        # This is necessary because we do not have events before the first disparity map.
-        assert int(Path(self.disp_gt_pathstrings[0]).stem) == 0
-        self.disp_gt_pathstrings.pop(0)
-        self.timestamps = self.timestamps[1:]
+            # Remove first disparity path and corresponding timestamp.
+            # This is necessary because we do not have events before the first disparity map.
+            assert int(Path(self.disp_gt_pathstrings[0]).stem) == 0
+            self.disp_gt_pathstrings.pop(0)
+            self.timestamps = self.timestamps[1:]
+
+        elif self.mode == 'test':
+            disp_dir = seq_path / 'disparity'
+            assert disp_dir.is_dir()
+            disp_timestamps = str(disp_dir) + "/timestamps.csv"
+            self.timestamps = np.loadtxt(disp_timestamps, dtype='int64', skiprows=1, delimiter=',')
+            print(self.timestamps[0][0])
+
+
+            # timestamps = []
+            # with open(disp_timestamps) as f:
+            #     next(f)
+            #     for row in f:
+            #         timestamps.append(row.split(',')[0])
+            #         # print(row.split(',')[0])
+                    #extract file name
+            # self.timestamps = df["# timestamp_us"]
+            # self.timestamps = timestamps
+            # print(self.timestamps)
+            # self.timestamps = np.loadtxt(disp_dir / 'timestamps.txt', dtype='int64')
+
 
         self.h5f = dict()
         self.rectify_ev_maps = dict()
@@ -121,7 +146,10 @@ class Sequence(Dataset):
             h5f.close()
 
     def __len__(self):
-        return len(self.disp_gt_pathstrings)
+        if self.mode == 'train':
+            return len(self.disp_gt_pathstrings)
+        else:
+            return len(self.timestamps)
 
     def rectify_events(self, x: np.ndarray, y: np.ndarray, location: str):
         assert location in self.locations
@@ -133,17 +161,31 @@ class Sequence(Dataset):
         return rectify_map[y, x]
 
     def __getitem__(self, index):
-        ts_end = self.timestamps[index]
-        # ts_start should be fine (within the window as we removed the first disparity map)
-        ts_start = ts_end - self.delta_t_us
+        
 
-        disp_gt_path = Path(self.disp_gt_pathstrings[index])
-        file_index = int(disp_gt_path.stem)
-        output = {
-            'disparity_gt': self.get_disparity_map(disp_gt_path),
-            'file_index': file_index,
-        }
+        if self.mode == 'train':
+            ts_end = self.timestamps[index]
+            # ts_start should be fine (within the window as we removed the first disparity map)
+            ts_start = ts_end - self.delta_t_us
+            disp_gt_path = Path(self.disp_gt_pathstrings[index])
+            file_index = int(disp_gt_path.stem)
+            output = {
+                'disparity_gt': self.get_disparity_map(disp_gt_path),
+                'file_index': file_index,
+            }
+
+        if self.mode == 'test':
+            ts_end = self.timestamps[index][0]
+            ts_start = ts_end - self.delta_t_us
+            file_index = int(self.timestamps[index][1])
+            print(file_index)
+            output = {
+                'file_index': file_index,
+            }
+
+
         for location in self.locations:
+            
             event_data = self.event_slicers[location].get_events(ts_start, ts_end)
 
             p = event_data['p']
@@ -156,8 +198,17 @@ class Sequence(Dataset):
             y_rect = xy_rect[:, 1]
 
             event_representation = self.events_to_voxel_grid(x_rect, y_rect, p, t)
+            # if self.mode == 'train':
+            #     if 'representation' not in output:
+            #         output['representation'] = dict()
+            # elif self.mode == 'test':
+            #     output = {
+            #         'representation' : []
+            #     }
+                # output['representation'] = dict()
             if 'representation' not in output:
                 output['representation'] = dict()
+
             output['representation'][location] = event_representation
 
         return output
