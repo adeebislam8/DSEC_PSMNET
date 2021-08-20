@@ -111,7 +111,7 @@ def train(batch_idx, imgL,imgR, disp_true):
                     return loss
 
                 ## visualizing model output(prediction)
-                if batch_idx%100 == 0:
+                if batch_idx%50 == 0:
                     output = output.cpu().detach().numpy()
                     disp_true = disp_true.cpu()
                     show(disp_true[0])
@@ -149,13 +149,13 @@ def test(imgL,imgR,disp_true):
 
 
     pred_disp = output3.data.cpu()
-    show_output = output3.squeeze().cpu().detach().numpy()
-    show_disp_true = disp_true.cpu().squeeze()
-    # print(disp_true.shape)
-    # print(show_disp_true.shape)
+    # show_output = output3.squeeze().cpu().detach().numpy()
+    # show_disp_true = disp_true.cpu().squeeze()
+    # # print(disp_true.shape)
+    # # print(show_disp_true.shape)
 
-    show(show_disp_true)
-    show(show_output)
+    # show(show_disp_true)
+    # show(show_output)
     pred_disp = pred_disp.squeeze(0)
     #computing 3-px error#
     true_disp = copy.deepcopy(disp_true)
@@ -172,6 +172,8 @@ def test(imgL,imgR,disp_true):
 
 def adjust_learning_rate(optimizer, epoch):
     lr = 0.0001
+    # if epoch >= 5:
+    #     lr = 0.0001
     # lr = 0.0009 * (0.99**(epoch))
     # if epoch > 50:
     #     lr = 0.0001
@@ -251,7 +253,7 @@ def main():
                 print("updating total_train_loss\n")
                 total_train_loss += loss
                 # break
-                if count > 0:
+                if count > 150:
                         break
                 count += 1
             
@@ -278,7 +280,7 @@ def main():
                 test_loss = test(left_voxel,right_voxel, disp)
                 print('Iter %d test loss = %.3f' %(batch_idx, test_loss))
                 total_test_loss += test_loss
-                if count > 50:
+                if count > 100:
                     break
                 count += 1
 
